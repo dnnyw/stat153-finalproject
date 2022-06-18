@@ -4,3 +4,10 @@
  Used parametric and differencing models to detrend data, then fitted SARIMA models in order to model the underlying random noise to make predictions. 
  
  Predicted results on simulated data had on average a 10% margin of error (roughly 10,000 cases). 
+
+
+ Packages Used: 
+ 
+ * ggPlot
+ * ASTSA (Applied Statistical Time Series Analysis)
+ * tidyverse
