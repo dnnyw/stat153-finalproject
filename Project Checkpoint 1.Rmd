@@ -1,0 +1,40 @@
+---
+title: "STAT 153 Project Checkpoint 1"
+author: "Danny Wu"
+date: "2/8/2021"
+geometry: margin = 2cm
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(tidyverse)
+```
+
+```{r Importing Data and Plot, fig.cap = "Daily COVID-19 cases from March 29, 2020 to January 24, 2021" ,fig.align = 'left'}
+covid = read_csv("data_covid.csv") 
+covid$date_time = as.Date(covid$date, format = "%m/%d/%y")
+plot1 = ggplot(covid, aes(x = date_time, y = cases)) +
+  geom_line(color = "Red") +
+  labs(title = "Time Series Plot of Covid Cases", x = "Date", y = "Cases") +
+  scale_x_date(date_breaks = "months" , date_labels = "%b-%y") +
+  scale_y_continuous(labels = scales::comma, limits = c(0,230000), breaks=seq(0,220000,20000)) +
+  theme_minimal()
+```
+
+
+```{r Importing Data and Plot, fig.cap = "Daily COVID-19 cases from March 29, 2020 to January 24, 2021" ,fig.align = 'left'}
+theme(plot.title = element_text(hjust = 0.5))
+plot1
+```
+
+
+
+
+
+
+
+
+
+

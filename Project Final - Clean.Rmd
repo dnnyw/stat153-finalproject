@@ -1,0 +1,693 @@
+---
+title: "COVID-19 Prediction Project"
+author: "Danny Wu"
+date: "5/10/2021"
+geometry: margin = 1.75cm
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(tidyverse)
+library(ggpubr)
+library(astsa)
+covid = read_csv("data_covid.csv") 
+covid$date_time = as.Date(covid$date, format = "%m/%d/%y")
+covid$t = covid$ID
+
+# average out the dates with zero
+to_fix = c(179, 188, 204, 222)
+covid$cases_fixed = covid$cases
+for (i in to_fix){
+  value = covid$cases_fixed[i+1] / 2
+  covid$cases_fixed[i] = value
+  covid$cases_fixed[i+1] = value
+}
+
+pgram = function(x) {
+  m = floor(length(x)/2)
+  magnitude = abs(fft(x)[1:m+1])^2/length(x)
+  df = data.frame(index <- c(1:length(magnitude)), magnitude)
+  ggplot(data = df, aes(x = index, y = magnitude)) + 
+    geom_hline(yintercept=0) +
+    geom_linerange(ymax = magnitude, ymin = 0) +
+    theme(plot.title = element_text(hjust = 0.5), plot.caption = element_text(hjust = 0.5) )
+}
+
+time_case_plot = ggplot() + theme_minimal() +
+  scale_x_date(date_breaks = "months" , date_labels = "%b-%y") +
+  scale_y_continuous(labels = scales::comma, limits = c(0,280000), breaks=seq(0,280000,40000)) +
+  theme(plot.title = element_text(hjust = 0.5), 
+        axis.text.x = element_text(angle = 45),
+        text = element_text(size=9))+ 
+   labs(x = "Date", y = "Cases")
+
+```
+
+```{r, include = FALSE}
+sarima_Ljung = function (xdata, p, d, q, P = 0, D = 0, Q = 0, S = -1, details = TRUE, 
+          xreg = NULL, Model = TRUE, fixed = NULL, tol = sqrt(.Machine$double.eps), 
+          no.constant = FALSE, max.lag = -1) 
+{
+  layout = graphics::layout
+  par = graphics::par
+  plot = graphics::plot
+  grid = graphics::grid
+  title = graphics::title
+  polygon = graphics::polygon
+  abline = graphics::abline
+  lines = graphics::lines
+  frequency = stats::frequency
+  coef = stats::coef
+  dnorm = stats::dnorm
+  ppoints = stats::ppoints
+  qnorm = stats::qnorm
+  time = stats::time
+  na.pass = stats::na.pass
+  trans = ifelse(is.null(fixed), TRUE, FALSE)
+  trc = ifelse(details, 1, 0)
+  n = length(xdata)
+  if (is.null(xreg)) {
+    constant = 1:n
+    xmean = rep(1, n)
+    if (no.constant == TRUE) 
+      xmean = NULL
+    if (d == 0 & D == 0) {
+      fitit = stats::arima(xdata, order = c(p, d, q), seasonal = list(order = c(P, 
+                                                                                D, Q), period = S), xreg = xmean, include.mean = FALSE, 
+                           fixed = fixed, trans = trans, optim.control = list(trace = trc, 
+                                                                              REPORT = 1, reltol = tol))
+    }
+    else if (xor(d == 1, D == 1) & no.constant == FALSE) {
+      fitit = stats::arima(xdata, order = c(p, d, q), seasonal = list(order = c(P, 
+                                                                                D, Q), period = S), xreg = constant, fixed = fixed, 
+                           trans = trans, optim.control = list(trace = trc, 
+                                                               REPORT = 1, reltol = tol))
+    }
+    else fitit = stats::arima(xdata, order = c(p, d, q), 
+                              seasonal = list(order = c(P, D, Q), period = S), 
+                              include.mean = !no.constant, fixed = fixed, trans = trans, 
+                              optim.control = list(trace = trc, REPORT = 1, reltol = tol))
+  }
+  if (!is.null(xreg)) {
+    fitit = stats::arima(xdata, order = c(p, d, q), seasonal = list(order = c(P, 
+                                                                              D, Q), period = S), xreg = xreg, fixed = fixed, trans = trans, 
+                         optim.control = list(trace = trc, REPORT = 1, reltol = tol))
+  }
+  if (details) {
+    old.par <- par(no.readonly = TRUE)
+
+  
+     ## Standardized residuals
+    
+    rs <- fitit$residuals
+    stdres <- rs/sqrt(fitit$sigma2)
+    num <- sum(!is.na(rs))
+   
+    ##LjungBox Statistics 
+    
+    nlag <- ifelse(S < 7, 20, 3 * S)
+    ppq <- p + q + P + Q - sum(!is.na(fixed))
+    if (nlag < ppq + 8) {
+      nlag = ppq + 8
+    }
+    pval <- numeric(nlag)
+    for (i in (ppq + 1):nlag) {
+      u <- stats::Box.test(rs, i, type = "Ljung-Box")$statistic
+      pval[i] <- stats::pchisq(u, i - ppq, lower.tail = FALSE)
+    }
+    # ggplot() + geom_point(aes(x = (ppq + 1):nlag, y = pval[(ppq + 1):nlag])) + 
+    #   geom_hline(aes(y_intercept = 0.05), color = "Blue", linetype = "dashed") +
+    #   labs(x = "Lag (H)", y = "p-value") +
+    #   theme(plot.title = element_text(hjust = 0.5), 
+    #     axis.text.x = element_text(angle = 45),
+    #     text = element_text(size=9))
+    # 
+                          
+    
+    # plot((ppq + 1):nlag, pval[(ppq + 1):nlag], xlab = "LAG (H)", 
+    #      ylab = "p value", ylim = c(-0.1, 1), main = "p values for Ljung-Box statistic")
+    # abline(h = 0.05, lty = 2, col = "blue")
+    # on.exit(par(old.par))
+  }
+  if (is.null(fixed)) {
+    coefs = fitit$coef
+  }
+  else {
+    coefs = fitit$coef[is.na(fixed)]
+  }
+  dfree = fitit$nobs - length(coefs)
+  t.value = coefs/sqrt(diag(fitit$var.coef))
+  p.two = stats::pf(t.value^2, df1 = 1, df2 = dfree, lower.tail = FALSE)
+  ttable = cbind(Estimate = coefs, SE = sqrt(diag(fitit$var.coef)), 
+                 t.value, p.value = p.two)
+  ljung_x = (ppq + 1):nlag
+  ljung_y = pval[(ppq + 1):nlag]
+  ttable = round(ttable, 4)
+  k = length(coefs)
+  n = n - (d + D)
+  BIC = stats::BIC(fitit)/n
+  AIC = stats::AIC(fitit)/n
+  AICc = (n * AIC + ((2 * k^2 + 2 * k)/(n - k - 1)))/n
+  list(fit = fitit, degrees_of_freedom = dfree, ttable = ttable, 
+       AIC = AIC, AICc = AICc, BIC = BIC, x = ljung_x, y = ljung_y)
+}
+```
+
+
+
+# 1. Executive Summary
+
+Using a SARIMA(2,1,1)x(2,1,1)[7] model, we predict COVID-19 cases in the fifth borough of Gotham City to exhibit the same weekly seasonality as before, however we also expect cases to be higher than the what we have observed over past few weeks (with the exception of a massive spike in cases on January 7, 2021). City leadership should therefore increase the aid to provide greater support, preventing the system from being potentially overwhelmed as cases rise. 
+
+# 2. Exploratory Data Analysis
+
+Daily COVID-19 cases have dramatically increased since March of last year. As seen in Figure 1, there is very strong trend in the data. Cases grew from March to August then slightly declined until November, where it rapidly grew and exceeded the levels before the decline. There is also weekly seasonality, as seen in the fluctuations which occur every seven days in Figure 1. It is also clear that the data exhibits heretoscedasticity as the variance of daily COVID-19 cases has been increasing over time.
+
+There are a few anomalies in which entries will have zero counts with the following entry having an abnormally large number of cases (marked by the red and orange points respectively in Figure 1). These anomalies are likely due to cases being miscounted and accidentally moved to the next day. There are four of these instances which we correct for by dividing the number of counts on the second date in half and setting that as the number of counts for both dates.
+
+```{r Importing Data and Plot, echo= FALSE , fig.cap="Daily COVID-19 cases from March 29, 2020 to January 24, 2021. Black solid line indicates original time series. Dashed green line represents corrected dataset with red and orange points indicating erroneous data points.", fig.width= 8, fig.height = 3.5, fig.align='center', warning=FALSE}
+
+
+# defining weekdays and creating weekend column
+covid$dayofweek = ordered(weekdays(covid$date_time), levels=c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"))
+
+
+# plotting main time series
+plot1 = time_case_plot +
+  geom_line(data = covid, aes(x = date_time, y = cases), color = "Black", lwd=.75) + 
+  geom_line(data = covid, aes(x = date_time, y = cases_fixed), color = "Green", lwd=.5,  alpha = 0.75, linetype="dashed") +
+  geom_point(aes(x = covid$date_time[to_fix],
+                 y = covid$cases[to_fix]
+                 ),
+             color = "red",
+             shape = 1,
+             size = 1.2
+             ) +
+  geom_point(aes(x = covid$date_time[to_fix]+1,
+                 y = covid$cases[to_fix + 1]
+                 ),
+             color = "Orange",
+             shape = 1,
+             size = 1.2
+             ) 
+
+plot1
+
+```
+
+\newpage
+
+# 3. Models Considered
+
+## 3.1 Parametric Signal Model
+
+
+First we consider a parametric signal model. From a periodogram we see that there are two dominant fourier frequencies at 2/302 and 43/302 corresponding roughly to periods of period of 151 and 7 days. Thus we create a sinusoid with frequency 1/151 to model the larger trend, and then use indicators for each day of week to model the weekly seasonality. We also include terms for time and interaction between time and the day of the week in order to capture to the upwards trend of the data. To deal with the heteroskedasticity, we first log the data, and then also include an interaction term between the sinusoid, time, and the day of week indicators to capture the fluctuations of the sinusoud's magnitude over time. Our parametric model is as follows:  
+
+\begin{gather}
+\notag log(\text{Cases}_t) = \beta_0 + \beta_1 t + \beta_2 t^2 + \sum_{i=0}^5 \left[
+\beta_{3 +6i} I_{\text{weekday}_{it}} 
++ \beta_{4+ 6i} tI_{\text{weekday}_{it}}
++ \beta_{5 +6i} I_{\text{weekday}_{it}} \text{cos} \left( \frac{2\pi t}{151} \right)\right. \\
+\left.
+\notag  + \beta_{6+6i} I_{\text{weekday}_{it}} \text{sin} \left( \frac{2\pi t}{151} \right)
++ \beta_{7+6i} t I_{\text{weekday}_{it}} \text{cos} \left( \frac{2\pi t}{151} \right)
++ \beta_{8+6i}   t I_{\text{weekday}_{it}} \text{sin} \left( \frac{2\pi t}{151} \right)
+ \right] \\
++ \sum_{j=0}^{2} \left[ \beta_{39+2j} \text{cos} \left( \frac{2\pi t}{151} \right) + \beta_{40+2j} \text{sin} \left( \frac{2\pi t}{151} \right) \right]
+\end{gather}
+
+
+```{r parametric signal model, echo = FALSE}
+freq_ann = 2/302
+
+covid$log_cases_fixed = log(covid$cases_fixed)
+model_para1Log = lm(data = covid, log_cases_fixed ~
+                  # big sinusoid 
+                  (cos(2*pi*t*freq_ann) + sin(2*pi*t*freq_ann)) * (1 + I(t) + I(t^2)) 
+                  
+                # indicator for day of week 
+                  + I(factor(t%%7)) 
+                  + I(factor(t%%7)) * I(t)
+                  
+                # day of week interaction with larger curve 
+                  + I(factor(t%%7)):(sin(2*pi*t*freq_ann) + cos(2*pi*t*freq_ann))* (1 + I(t))
+            
+                )
+
+
+```
+
+
+
+```{r Building Signal Model with LOGGED fixed cases, echo=FALSE, fig.align='center', fig.cap="Left panel: Our parametric signal model with the fitted values plotted in red and the logged data plotted in black. Right panel: Residuals of the aforementioend  parametric signal model. The residuals look relatively stationary.", fig.height=3, fig.width=8, warning=FALSE}
+
+covid$log_para_fitted = model_para1Log$fitted.values
+covid$log_para_res = model_para1Log$residuals
+
+
+plot4 = ggplot() + theme_minimal() + 
+  scale_x_date(date_breaks = "months" , date_labels = "%b-%y") +
+  theme(plot.title = element_text(hjust = 0.5), 
+        axis.text.x = element_text(angle = 45),
+        text = element_text(size=9))+ 
+  labs(x = "Date", y = "log(Cases)")+
+  geom_line(data = covid, aes(x = date_time, y = log_cases_fixed), color = "Black", alpha = 1,lwd=.5,) +
+  geom_line(data = covid, aes(x = date_time, y = log_para_fitted), color = "Red",lwd=.5, ) 
+
+plot5 = ggplot() + theme_minimal() + 
+  geom_line(data = covid, aes(x = date_time, y = log_para_res), color = "Black", alpha = 1,lwd=.5,) +
+  scale_x_date(date_breaks = "months" , date_labels = "%b-%y") +
+  theme(plot.title = element_text(hjust = 0.5), 
+        axis.text.x = element_text(angle = 45),
+        text = element_text(size=9)) +
+  labs(x = "Date", y = "Residuals") 
+
+ggarrange(plot4, plot5, ncol=2, nrow = 1)
+
+```
+
+
+
+```{r acf values for parametric model, echo=FALSE, fig.align='center', fig.cap="Sample ACF and PACF values for our logged parametric model (in black). Theoretical distributions for ARMA(0,3)x(2,1)[7] in blue triangles, and ARMA(2,2)x(1,2)[7] in red squares.", fig.height=2, fig.width=8, warning=FALSE }
+para_acf2_values = acf2(model_para1Log$residuals, max.lag = 30, plot= FALSE)
+
+para_acf_vals = para_acf2_values[,'ACF']
+para_acf_upper = pmax(para_acf_vals, 0)
+para_acf_lower = pmin(para_acf_vals, 0)
+
+
+para_pacf_vals = para_acf2_values[,'PACF']
+para_pacf_upper = pmax(para_pacf_vals, 0)
+para_pacf_lower = pmin(para_pacf_vals, 0)
+
+
+# plot theoretical acf and pacf for both arma models) 
+
+# # ARMA(1,3)x(2,1)[7] = SMA on lags 7 SAR on lags 7 and 14 MA on 1 2 3 AR on 1
+# theoretical_para_acf_vals1 = ARMAacf(ma=c(0.3645, 0.1309, 0.1409,0 ,0 ,0,-0.9151),ar=c(-0.0421,0,0,0,0,0,0.6024,0,0,0,0,0,0,-0.2229),lag.max=30)
+# theoretical_para_pacf_vals1= ARMAacf(ma=c(0.3645, 0.1309, 0.1409,0 ,0 ,0,-0.9151),ar=c(-0.0421,0,0,0,0,0,0.6024,0,0,0,0,0,0,-0.2229),lag.max=30, pacf = TRUE)
+# 
+
+# ARMA(0,3)x(2,1)[7] = SMA on lags 7 SAR on lags 7 and 14 MA on 1 2 3 AR on 0
+theoretical_para_acf_vals2 = ARMAacf(ma=c(0.3232, 0.1174, 0.1371 ,0 ,0 ,0,-0.9150),ar=c(0, 0, 0, 0, 0, 0, 0.6028, 0, 0, 0, 0, 0, 0, -0.2233),lag.max=40)
+theoretical_para_pacf_vals2= ARMAacf(ma=c(0.3232, 0.1174, 0.1371 ,0 ,0 ,0,-0.9150),ar=c(0, 0, 0, 0, 0, 0, 0.6028, 0, 0, 0, 0, 0, 0, -0.2233),lag.max=30, pacf = TRUE)
+
+# ARMA(2,1)x(1,2)[7] = SMA on lags 7 and 14, SAR on lags 7 MA on 1 AR on 1 and 2 
+theoretical_para_acf_vals3 = ARMAacf(ma=c(0.3860, -0.2521, 0, 0, 0, 0, -0.4173, 0, 0, 0, 0, 0, 0, -0.4678),ar=c(-0.0701, 0.3754, 0, 0, 0, 0, 0.1205),lag.max=40)
+theoretical_para_pacf_vals3= ARMAacf(ma=c(0.3860, -0.2521, 0, 0, 0, 0, -0.4173, 0, 0, 0, 0, 0, 0, -0.4678),ar=c(-0.0701, 0.3754, 0, 0, 0, 0, 0.1205),lag.max=30, pacf = TRUE)
+
+
+
+#acf plot
+
+plot6 = ggplot() + geom_point(aes(x = seq(1,length(para_acf_vals)), y = para_acf_vals), size = 0.75) +
+  geom_linerange(aes(x = seq(1,length(para_acf_vals)), ymin = para_acf_lower, ymax = para_acf_upper)) +
+  geom_hline(yintercept = 0) +
+  labs(x = "Lag", y = "ACF") +
+  # geom_point(aes(x = seq(1,length(theoretical_para_acf_vals1)), y = theoretical_para_acf_vals1 ), color = "Red", shape = 0, size = 1) + # ACF for model 1 
+  geom_point(aes(x = seq(1,30), y = theoretical_para_acf_vals2[2:31] ), color = "Blue", shape = 2, size = .75) + # ACF for model 2
+  geom_point(aes(x = seq(1,30), y = theoretical_para_acf_vals3[2:31] ), color = "Red", shape = 0, size = .75)+ # ACF for model 3
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5),
+        text = element_text(size=9)) 
+
+
+
+#pacf plot
+
+plot7 = ggplot() + geom_point(aes(x = seq(1,length(para_pacf_vals)), y = para_pacf_vals), size = 0.75) +
+  geom_linerange(aes(x = seq(1,length(para_pacf_vals)), ymin = para_pacf_lower, ymax = para_pacf_upper)) +
+  geom_hline(yintercept = 0) +
+  labs(x = "Lag", y = "PACF") +
+  # geom_point(aes(x = seq(1,length(theoretical_para_pacf_vals1)), y = theoretical_para_pacf_vals1 ), color = "Red", shape = 0, size = 1) +
+  geom_point(aes(x = seq(1,30), y = theoretical_para_pacf_vals2 ), color = "Blue", shape = 2, size = .75) +
+  geom_point(aes(x = seq(1,30), y = theoretical_para_pacf_vals3 ), color = "Red", shape = 0, size = .75) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5),
+        text = element_text(size=9)) 
+ 
+
+
+ggarrange(plot6, plot7, ncol=2, nrow = 1)
+
+```
+
+
+
+### 3.1.1 Parametric Signal Model with MSARMA(0,3)x(2,1)[7]
+
+Looking at the Autocorrelation Function (ACF) and Partial Autocorrelation Function (PACF) values of our residuals in Figure 3, we observe large magnitudes at lags 1, 2, 3, 14 and 28 on the ACF plot and at lags 1, 14, and 28 in our PACF plot. The significant values in lags 1, 2, and 3 in the ACF plot the and the significant value at lag 1 in the PACF suggest an ARMA(1,3) fit. In addition, the 2 large magnitudes at lags 14 and 28 in both ACF and PACF plots suggest SARMA(2,2). Though the seasonal autocorrelation appears to begin at lag 14, through trial and error, we found that a period of 7 works much better, and through additional tweaking, we arrive at an MSARMA(0,3)x(2,1)[7]. Looking at the plot in Figure 4 we see that the p-values for the Ljung-Box statistic are all very insignificant, indicating that we cannot reject the hypothesis that the stationary process we observe was generated from this model.  
+
+```{r sarima model without AR(1) , echo=FALSE,warning=FALSE,message=FALSE,error=FALSE, results='hide',fig.height=1.5, fig.width=8, fig.cap="Plot of p-values for Ljung-Box statistic for Parametric Signal Model with MSARMA(0,3)x(2,1)[7]" }
+
+para_model2 = sarima_Ljung(model_para1Log$residuals, p = 0 , d = 0, q = 3,  P = 2, D = 0, Q = 1, S = 7)
+ggplot() + geom_point(aes(x = para_model2$x, y = para_model2$y), shape =21, size = 2, fill = "white") +
+   geom_hline(aes(yintercept = 0.05), color = "Blue", linetype = "dashed") +
+   geom_hline(aes(yintercept = 0), color = "black", linetype = "solid") +   
+   labs(x = "Lag (H)", y = "p-value") +
+   scale_y_continuous(limits = c(-0.05,1), breaks=seq(0,1,.2), minor_breaks = seq(0, 1, 0.2)) +
+   scale_x_continuous(breaks=seq(8,21,2), minor_breaks = seq(7, 21, 2))+
+  theme_minimal()+
+  theme(plot.title = element_text(hjust = 0.5),
+        text = element_text(size=9)) 
+```
+
+
+
+### 3.1.2 Parametric Signal Model with MSARMA(2,2)x(1,2)[7]
+
+The R function auto.arima() suggests an MSARMA(2,2)x(1,2)[7] model. This model is plausible, as the Ljung-Box statistics are all almost all of large magnitude as seen in Figure 5. In addition, in Figure 3, the theoretical ACF and PACF points from the MSARMA(2,2)x(1,2)[7] model, shown in red, appear to fit the sample ACF and sample PACF slightly better than the prior MSARMA(0,3)x(2,1)[7] model, further signaling good fit.  
+
+```{r auto.arima model, echo=FALSE,warning=FALSE,message=FALSE,error=FALSE, results='hide',fig.height=1.5, fig.width=8, fig.cap="Plot of p-values for Ljung-Box statistic for Parametric Signal Model with MSARMA(2,2)x(1,2)[7]"}
+
+ts_para_res = ts(model_para1Log$residuals, start = 1, end = 43, frequency = 7)
+# forecast::auto.arima(ts_para_res)
+para_model3 = sarima_Ljung(model_para1Log$residuals, p = 2, d = 0, q = 2, P = 1, Q = 2, S = 7)
+ggplot() + geom_point(aes(x = para_model3$x, y = para_model3$y), shape =21, size = 2, fill = "white") +
+   geom_hline(aes(yintercept = 0.05), color = "Blue", linetype = "dashed") +
+   geom_hline(aes(yintercept = 0), color = "black", linetype = "solid") + 
+   labs(x = "Lag (H)", y = "p-value", title = ) +
+   scale_y_continuous(limits = c(-0.05,1), breaks=seq(0,1,.2), minor_breaks = seq(0, 1, 0.2)) +
+   scale_x_continuous(breaks=seq(8,21,2), minor_breaks = seq(7, 21, 2))+
+  theme_minimal()+
+  theme(plot.title = element_text(hjust = 0.5),
+        text = element_text(size=9)) 
+```
+
+## 3.2 Differencing Model
+
+We now try a differencing approach. Because there exists heteroskedasticity, we apply a variance stabilizing transformation (VST) by logging all of the values. Since there is weekly seasonality, we applying differencing with a lag of 7. Looking at the residuals, there is still a slight downward trend so we apply differencing once again. Our resulting differenced data can be represented by the equation $\nabla_1\nabla_7Log(\text{Cases}_t)  = Log(\text{Cases}_t) - Log(\text{Cases}_{t-1}) - Log(\text{Cases}_{t-7}) + Log(\text{Cases}_{t-8})$ and is shown in Figure 6. 
+
+```{r Differencing Model, echo = FALSE, fig.cap="Plot of VST transformed data with lag 7 and lag 1 differencing applied. The result looks relatively stationary.",fig.width= 8, fig.height = 4, fig.align='center'}
+vst_covid = log(covid$cases_fixed)
+diff_covid = diff(diff(vst_covid, lag = 7))
+
+helper_distance = length(diff_covid) - length(vst_covid)
+
+plot8 = ggplot() + 
+  geom_line(aes(x = covid$date_time[0:helper_distance], y = diff_covid)) + 
+  labs(y = expression(paste(nabla[1],nabla[7], log("Cases"[t]))), x = "Date") + 
+  scale_x_date(date_breaks = "months" , date_labels = "%b-%y") +
+  theme(plot.title = element_text(hjust = 0.5), 
+        axis.text.x = element_text(angle = 45),
+        text = element_text(size=9))+
+  theme_minimal()+
+  theme(plot.title = element_text(hjust = 0.5),
+        text = element_text(size=9)) 
+
+plot8
+```
+
+
+
+
+
+### 3.2.1 SARIMA(2,1,1)x(2,1,1)[7] 
+
+Looking at the ACF and PACF values for our differenced data in Figure 7, there are large magnitudes at lags 1 and 7 for the ACF plot. This suggests q = 1 and Q = 1 with a seasonal period of 7. In the PACF plot we see large magnitudes at lags 1, 2, 7 and 14, which suggests p = 2 and P = 2. Through some trial and error, we arrive at an MSARMA(2,1)x(2,1)[7], and as seen through the the Ljung-Box statistics in Figure 8, almost all p-values are insignificant indicating this model is a good fit for the differenced data. We can represent our MSARMA noise model combined with differencing concisely as a SARIMA(2,1,1)x(2,1,1)[7] model for the entire dataset 
+
+```{r acf values for differencing model, echo=FALSE, fig.align='center', fig.cap="Sample ACF and PACF values from our differencing model. Theoretical distributions for MSARMA(2,1)x(2,1)[7] in blue triangles, and MSARMA(1,1)x(0,1)[7] in the red squares ", fig.height=2.5, fig.width=8, warning=FALSE }
+# make a plot of the acf values but side to side 
+diff_acf2_values = acf2(diff_covid, max.lag = 30, plot= FALSE)
+
+diff_acf_vals = diff_acf2_values[,'ACF']
+diff_acf_upper = pmax(diff_acf_vals, 0)
+diff_acf_lower = pmin(diff_acf_vals, 0)
+
+
+diff_pacf_vals = diff_acf2_values[,'PACF']
+diff_pacf_upper = pmax(diff_pacf_vals, 0)
+diff_pacf_lower = pmin(diff_pacf_vals, 0)
+
+
+# Theoretical distributions 
+
+# ARMA(2,1)x(2,1)[7] = SMA on lags 7 SAR on lags 7 and 14 MA on 1 AR on 1 and 2
+theoretical_diff_acf_vals1 = ARMAacf(ma=c(-0.8693 , 0, 0, 0, 0, 0, -0.7956),ar=c(0.2448, -0.0212, 0, 0, 0, 0, -0.0052, 0, 0, 0, 0, 0, 0,-0.1203), lag.max=40)
+theoretical_diff_pacf_vals1= ARMAacf(ma=c(-0.8693 , 0, 0, 0, 0, 0, -0.7956),ar=c(0.2448, -0.0212, 0, 0, 0, 0, -0.0052, 0, 0, 0, 0, 0, 0,-0.1203), lag.max=30, pacf = TRUE)
+
+# ARMA(1,1)x(0,1)[7] = 
+theoretical_diff_acf_vals2 = ARMAacf(ma=c(-0.7859, 0, 0, 0, 0, 0, -0.8334), ar=c(0.2605), lag.max=40)
+theoretical_diff_pacf_vals2= ARMAacf(ma=c(-0.7859, 0, 0, 0, 0, 0, -0.8334), ar=c(0.2605), lag.max=30, pacf = TRUE)
+
+
+#acf plot
+plot9 = ggplot() + geom_point(aes(x = seq(1,length(diff_acf_vals)), y = diff_acf_vals), size = 0.75) +
+  geom_linerange(aes(x = seq(1,length(diff_acf_vals)), ymin = diff_acf_lower, ymax = diff_acf_upper)) +
+  geom_hline(yintercept = 0) +
+  labs(x = "Lag", y = "ACF") +
+  geom_point(aes(x = seq(1,30), y = theoretical_diff_acf_vals1[2:31]), color = "Blue", shape = 2, size = .75) + 
+  geom_point(aes(x = seq(1,30), y = theoretical_diff_acf_vals2[2:31]), color = "Red", shape = 0, size = .75) +
+  theme_minimal()+
+  theme(plot.title = element_text(hjust = 0.5),
+        text = element_text(size=9)) 
+
+#pacf plot
+plot10 = ggplot() + geom_point(aes(x = seq(1,length(diff_pacf_vals)), y = diff_pacf_vals), size = 0.75) +
+  geom_linerange(aes(x = seq(1,length(diff_pacf_vals)), ymin = diff_pacf_lower, ymax = diff_pacf_upper)) +
+  geom_hline(yintercept = 0) +
+  labs(x = "Lag", y = "PACF") +
+  geom_point(aes(x = seq(1,30), y = theoretical_diff_pacf_vals1 ), color = "Blue", shape = 2, size = .75) + 
+  geom_point(aes(x = seq(1,30), y = theoretical_diff_pacf_vals2 ), color = "Red", shape = 0, size = .75) +
+  theme_minimal()+
+  theme(plot.title = element_text(hjust = 0.5),
+        text = element_text(size=9)) 
+
+
+
+ggarrange(plot9, plot10, ncol=2, nrow = 1)
+
+```
+
+
+```{r MSARMA (2,1)x(2,1)[7], echo=FALSE,warning=FALSE,message=FALSE,error=FALSE, results='hide', fig.cap= "Plot of p-values for Ljung-Box statistic for SARIMA(2,1,1)x(2,1,1)[7] ", fig.width= 8, fig.height = 1.5, fig.align='center'}
+# not bad results
+diff_model1 = sarima_Ljung(diff_covid, p = 2, d = 0, q = 1, P = 2, D = 0, Q = 1, S = 7)
+#spike at 7 and 14 = SAR(2) and 2 spikes at lags 1 and 2 indicate AR(2)
+#Spike at lag 1 in ACF = MA(1), spike at lag 7 is ACF = SMA(1) 
+ggplot() + geom_point(aes(x = diff_model1$x, y = diff_model1$y), shape =21, size = 2, fill = "white") +
+   geom_hline(aes(yintercept = 0.05), color = "Blue", linetype = "dashed") +
+   geom_hline(aes(yintercept = 0), color = "black", linetype = "solid") +
+   labs(x = "Lag (H)", y = "p-value", title = ) +
+   scale_y_continuous(limits = c(-0.05,1), breaks=seq(0,1,.2), minor_breaks = seq(0, 1, 0.2)) +
+   scale_x_continuous(breaks=seq(8,21,2), minor_breaks = seq(7, 21, 2))+
+  theme_minimal()+
+  theme(plot.title = element_text(hjust = 0.5),
+        text = element_text(size=9)) 
+```
+
+
+### 3.2.2 SARIMA(1,1,1)x(0,1,1)[7]
+
+For our second noise model on the differenced data, we try to simplify the prior MSARMA(2,1)x(2,1)[7] model while still satisfying the necessary diagnostics tests. After some trial and error, we arrive at an MSARMA(1,1)x(0,1)[7]. As seen in Figure 9, this model's p-values for the Ljung-Box statistic are all insignificant, indicating a good fit. The benefit of this model is that it is relatively less complex than the prior model by a magnitude of 3. We can represent our MSARMA noise model combined with differencing concisely as aSARIMA(1,1,1)x(0,1,1)[7] model for the entire process. 
+
+
+```{r ARMA (1,1)x(0,1)[7], echo=FALSE,warning=FALSE,message=FALSE,error=FALSE, results='hide', fig.cap= "Plot of p-values for Ljung-Box statistic for SARIMA(1,1,1)x(0,1,1)[7]" ,fig.width= 8, fig.height = 1.5, fig.align='center'}
+diff_model2 = sarima_Ljung(diff_covid, p = 1, d = 0, q = 1, P = 0, D = 0, Q = 1, S = 7)
+ggplot() + geom_point(aes(x = diff_model2$x, y = diff_model2$y), shape =21, size = 2, fill = "white") +
+   geom_hline(aes(yintercept = 0.05), color = "Blue", linetype = "dashed") +
+   geom_hline(aes(yintercept = 0), color = "black", linetype = "solid") +
+   labs(x = "Lag (H)", y = "p-value", title = ) +
+   scale_y_continuous(limits = c(-0.05,1), breaks=seq(0,1,.2), minor_breaks = seq(0, 1, 0.2)) +
+   scale_x_continuous(breaks=seq(4,21,2), minor_breaks = seq(7, 21, 2))+
+  theme_minimal()+
+  theme(plot.title = element_text(hjust = 0.5),
+        text = element_text(size=9)) 
+```
+
+
+
+# 4 Model Comparison and Selection
+
+
+
+```{r Cross Validation for differencing models, fig.show='hide', echo=FALSE,warning=FALSE,message=FALSE,error=FALSE, results='hide' }
+
+# take a certain amount of values and predict week by week and calculate the SSE for each one of the predictions
+
+# 43 weeks + 1 day of data
+
+SSE = c(paramodel1 = 0, paramodel2 = 0, diffmodel1 = 0, diffmodel2= 0)
+
+
+for (i in 23:42){
+  # <------------ parametric model ------------>
+  train_time = 1:(7*i+1)
+  test_time = (7*i+2):(7*(i+1)+1)
+  train_vals = covid$log_cases_fixed[1:(7*i+1)]
+  test_vals = covid$cases_fixed[(7*i+2):(7*(i+1)+1)]
+  print("Test vals:")
+  print(test_vals)
+
+  # train the regression model for the trend and predict the trend values
+  model_para = lm(train_vals ~
+                  # big sinusoid
+                  (cos(2*pi*train_time*freq_ann) + sin(2*pi*train_time*freq_ann)) * (1 + I(train_time) + I(train_time^2))
+                # indicator for day of week
+                  + I(factor(train_time%%7))
+                  + I(factor(train_time%%7)) * I(train_time)
+                # day of week interaction with larger curve
+                  + I(factor(train_time%%7)):(sin(2*pi*train_time*freq_ann) + cos(2*pi*train_time*freq_ann))* (1 + I(train_time)))
+  test_matrix = model.matrix( ~ (cos(2*pi*test_time*freq_ann) + sin(2*pi*test_time*freq_ann)) * (1 + I(test_time) + I(test_time^2))
+                              + I(factor(test_time%%7)) + I(factor(test_time%%7)) * I(test_time)
+                              + I(factor(test_time%%7)):(sin(2*pi*test_time*freq_ann) + cos(2*pi*test_time*freq_ann))* (1 + I(test_time)))
+  predicted_trend = test_matrix %*% model_para$coefficients
+
+
+  # spit out the noise of the residuals and all it back to the trend to get our actual predictions
+  # remember to un log it because we have been working with logged values
+
+  # ARMA(0,3)x(2,1)[7]
+  forecast1 = exp(predicted_trend + sarima.for(model_para$residuals, p = 0, d = 0, q = 3, P = 2, D = 0, Q = 1, S = 7, n.ahead = 7)$pred)
+
+  # ARMA(2,2)x(1,2)[7]
+  forecast2 = exp(predicted_trend + sarima.for(model_para$residuals, p = 2, d = 0, q = 2, P = 1, D = 0, Q = 2, S = 7, n.ahead = 7)$pred)
+
+
+  SSE[1] = SSE[1] + sum((forecast1 - test_vals)^2)
+  SSE[2] = SSE[2] + sum((forecast2 - test_vals)^2)
+
+  # <------------ differencing model ------------>
+
+  # ARMA(2,1,1)x(2,1,1)[7]
+  forecast3 = exp(sarima.for(train_vals, p = 2, d = 1, q = 1, P = 2, D = 1, Q = 1, S = 7, n.ahead = 7)$pred)
+
+  # ARMA(1,1,1)x(0,1,1)[7]
+  forecast4 = exp(sarima.for(train_vals, p = 1, d = 1, q = 1, P = 0, D = 1, Q = 1, S = 7, n.ahead = 7)$pred)
+
+  SSE[3] = SSE[3] + sum((forecast3 - test_vals)^2)
+  SSE[4] = SSE[4] + sum((forecast4 - test_vals)^2)
+
+}
+
+```
+
+The four proposed models are compared through time-series cross validation. We roll through the last 20 weeks of data, from 9/6/20 to 1/24/21, in 7 day increments and forecast a week forward using all past data. For each of these 20 sets of 7 forecasts, we calculate the summed squared error (SSE) of that group of 7 forecasts. These values are then aggregated and used to calculate the root mean squared prediction error (RMSPE) for each of the models, listed in Table 1. We see that our SARIMA(2,1,1)x(2,1,1)[7] has the lowest RMSPE, and thus will be chosen as the model for predicting cases over the next 10 days.
+\linebreak
+\centerline{Table 1: Cross-validated out-of-sample RMSPE for the four models under consideration.}
+
+```{r rmsetable, echo = FALSE}
+
+rmse = matrix(sqrt(SSE/140), nrow=4,ncol = 1)
+colnames(rmse) = "RMSPE"
+rownames(rmse) = c(
+        "Logged Parametric Model + ARMA(0,3)x(2,1)[7]",
+        "Logged Parametric Model + ARMA(2,2)x(1,2)[7]",
+        "VST + SARIMA(2,1,1)x(2,1,1)[7]",
+        "VST + SARIMA(1,1,1)x(0,1,1)[7]"
+        )
+knitr::kable(rmse)
+
+```
+
+
+
+
+# 5 Results 
+
+The following SARIMA(2,1,1)x(2,1,1)[7] model will be applied to the logged data in order to forecast the next 10 days of COVID-19 cases. As this gives predictions in the logged scale, we will then exponentiate to produce our final forecasts. 
+
+
+\begin{align}
+Log(\text{Cases}_t)  =& \,Log(\text{Cases}_{t-1}) + Log(\text{Cases}_{t-7}) - Log(\text{Cases}_{t-8}) + X_t \\ 
+\notag \\
+\notag X_t  =&\, \phi_1X_{t-1} + \phi_2 X_{t-2} + \Phi_1 X_{t-7} - \Phi_1 \phi_1X_{t-8} - \Phi_1\phi_2X_{t-9}  + \Phi_2X_{t-14} - \Phi_2\phi_1X_{t-15} \\
+&  - \Phi_2\Phi_2X_{t-16} + W_t + \theta W_{t-1}+\Theta W_{t-7} +  \Theta \theta X_{t-8} \\
+\notag \\ 
+\hat{\mu}_X  =&\, -0.02716285
+\end{align}
+
+
+
+
+```{r preparing plot of forecasted data, fig.show='hide', echo=FALSE,warning=FALSE,message=FALSE,error=FALSE, results='hide'}
+forecast_final = sarima.for(covid$log_cases_fixed, p = 2, d = 1, q = 1, P = 2, D = 1, Q = 1, S = 7, n.ahead = 10) 
+pred_vals = exp(forecast_final$pred)
+
+new_dates = seq(as.Date("2021-01-25"), as.Date("2021-02-03"), "days")
+
+x_data = c(covid$date_time[250:302], new_dates)
+y_data = c(covid$cases_fixed[250:302], pred_vals)
+
+x_data_pred = new_dates
+y_data_pred = pred_vals
+
+predictions_plot = ggplot() + 
+  scale_x_date(date_breaks = "2 week" , date_labels = "%b-%d-%Y", date_minor_breaks = "1 day") +
+  scale_y_continuous(labels = scales::comma, limits = c(30000,280000), breaks=seq(0,280000,40000)) +
+  theme(plot.title = element_text(hjust = 0.5), 
+        text = element_text(size=9))+ 
+  labs(x = "Date", y = "Cases") +
+  geom_line(aes(x = x_data, y = y_data), color = "Black", lwd=.5,  alpha = 0.75) +
+  geom_point(aes(x = x_data, y = y_data), shape =21, size = 2, fill = "white") +
+  geom_line(aes(x = x_data_pred, y = y_data_pred), color = "red", lwd=.5,  alpha = 0.75) +
+  geom_point(aes(x = x_data_pred, y = y_data_pred), shape = 21 , size = 2, fill = "white", color = "red") +
+  theme_minimal()+
+  theme(plot.title = element_text(hjust = 0.5),
+        text = element_text(size=9)) 
+```
+
+\newpage
+
+## 5.1 Estimation of Model Parameters 
+
+The estimates of the model parameters are given in Table 2. Interestingly, we see that the coefficients on the MA and seasonal MA terms are very large in magnitude, indicating that the stationary process after differencing is very dependent on past values of the white noise. The AR and seasonal AR terms are not as large in magnitude, perhaps implying that past values of the stationary process itself are not as important.
+\linebreak
+\centerline{Table 2: Estimates of the MSARMA(2,1)x(2,1)[7] model parameters in Equation (3)}
+
+|Parameter|Estimate|SE|Coefficient Description|
+|:---------|---:|---:|:---|
+|$\phi_1$|0.2353|0.0885|AR coefficient (1)|
+|$\phi_2$|-0.0248|0.0732|AR coefficient (2)|
+|$\theta$|-0.7609|0.0702|MA coefficient|
+|$\Phi_1$|-0.0065|0.0833|Seasonal AR coefficient (1)|
+|$\Phi_2$|-0.1282|0.0761|Seasonal AR coefficient (2)|
+|$\Theta$|-0.7789|0.0677|Seasonal MA coefficient|
+|$\sigma^2_W$|0.06029|N/A|Variance of White Noise|
+
+
+## 5.2 Prediction 
+
+Figure 10 shows the forecasts of COVID-19 cases for the next ten days from January 25, 2021 to February 3, 2021. The model predicts that cases will naturally exhibit weekly seasonality with lower cases on Sundays and Mondays, however we see that the cases during the middle of the week (Tuesday, Wednesday, Thursday) will be higher than almost all past levels of COVID cases (with exception of the peak on January 7, 2021). This upwards trend in the mid-week cases will continue during the following week with even higher numbers of cases. 
+
+```{r predictions plot, echo = FALSE, fig.cap = "Forecasts of COVID-19 cases from January 25, 2021 to Feburary 3, 2021. The black points are obversed values, the red points are the forecasted values. Though truncated, ", fig.align='center', fig.height= 4}
+predictions_plot 
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

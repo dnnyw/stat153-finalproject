@@ -1,0 +1,1 @@
+You are a pathologist working in the fifth burrough of Gotham City. With resources running low, city leadership needs predictions of new cases in each burrough so it can strategically allocate aid. You have been tracking the daily number of new cases since March, and your goal is predict the number of new cases in the fifth burrough for the next ten days.

@@ -1,0 +1,245 @@
+---
+title: "STAT 153 Project Checkpoint 3"
+author: "Danny Wu"
+date: "3/31/2021"
+geometry: margin = 2cm
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(tidyverse)
+library(ggpubr)
+covid = read_csv("data_covid.csv") 
+covid$date_time = as.Date(covid$date, format = "%m/%d/%y")
+covid$t = covid$ID
+
+problem_index = c(164, 280, 273, 279, 156, 287)
+for (i in problem_index){
+  indicator = (covid$t == i)
+  covid[, ncol(covid) + 1] = indicator
+  colnames(covid)[ncol(covid)] = paste("index", i,"_indicator", sep = "")
+}
+
+
+# average out the dates with zero
+to_fix = c(179, 188, 204, 222)
+covid$cases_fixed = covid$cases
+for (i in to_fix){
+  value = covid$cases_fixed[i+1] / 2
+  covid$cases_fixed[i] = value
+  covid$cases_fixed[i+1] = value
+}
+
+pgram = function(x) {
+  m = floor(length(x)/2)
+  magnitude = abs(fft(x)[1:m+1])^2/length(x)
+  df = data.frame(index <- c(1:length(magnitude)), magnitude)
+  ggplot(data = df, aes(x = index, y = magnitude)) + 
+    geom_hline(yintercept=0) +
+    geom_linerange(ymax = magnitude, ymin = 0) +
+    theme(plot.title = element_text(hjust = 0.5), plot.caption = element_text(hjust = 0.5) )
+}
+
+time_case_plot = ggplot() + 
+  scale_x_date(date_breaks = "months" , date_labels = "%b-%y") +
+  scale_y_continuous(labels = scales::comma, limits = c(0,280000), breaks=seq(0,280000,40000)) +
+  theme(plot.title = element_text(hjust = 0.5), 
+        axis.text.x = element_text(angle = 45),
+        text = element_text(size=9))+ 
+   labs(x = "Date", y = "Cases")
+
+```
+
+# 1. Executive Summary
+
+COVID-19 has had a drastic impact to the daily lives of everyone around the globe. Having a prediction of the number of daily COVID-19 cases would be informative to both the health care sector as well as policy makers. Through our investigation, we fitted ...
+
+# 2. Exploratory Data Analysis
+
+Daily COVID-19 cases have dramatically increased since March of last year. As seen in the left panel of Figure 1, there is a very strong trend in the data. Cases grew from March to August then slightly declined until November, where it rapidly grew and exceeded the levels before the decline. There is also some seasonality based on the day of the week. We can see it in the fluctuations in the left panel as well as the right panel of Figure 1, where on average, cases are lower on Sunday and Monday. It is also clear that the data exhibits heretoscedasticity as the variance of daily COVID-19 cases has been increasing over time.
+
+The are a few anomalies in the data where a day has zero counts and the following day has a spike in cases (marked by the red and orange points respectively in the left panel of Figure 1). These anomalies are likely due to cases being miscounted and accidentally moved to the next day. There are four of these instances. To correct for them, we divide the number of counts on the second date in half and set that as the number of counts for both dates.
+
+```{r Importing Data and Plot, echo= FALSE , fig.cap="Left panel: Daily COVID-19 cases from March 29, 2020 to January 24, 2021. Dashed green line represents corrected dataset with red and orange points indicating erroneous data points. Right panel: Box-plot of the distribution of daily cases grouped by the day of the week.", fig.width= 8, fig.height = 3.5, fig.align='center', warning=FALSE}
+
+
+# defining weekdays and creating weekend column
+covid$dayofweek = ordered(weekdays(covid$date_time), levels=c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"))
+
+
+# plotting main time series
+plot1 = time_case_plot +
+  geom_line(data = covid, aes(x = date_time, y = cases), color = "Black" ) + 
+  geom_line(data = covid, aes(x = date_time, y = cases_fixed), color = "Green", size = .5, alpha = 0.75, linetype="dashed") +
+  geom_point(aes(x = covid$date_time[to_fix],
+                 y = covid$cases[to_fix]
+                 ),
+             color = "red",
+             shape = 11,
+             size = 0.5
+             ) +
+  geom_point(aes(x = covid$date_time[to_fix]+1,
+                 y = covid$cases[to_fix + 1]
+                 ),
+             color = "Orange",
+             shape = 11,
+             size = 0.5
+             ) 
+# plotting the weekday trends
+plot2 = time_case_plot + 
+  geom_line(data = covid, aes(x = date_time, y = cases, color = dayofweek)) 
+
+# making a box and whisker plot of each of the weekdays 
+plot3 = ggplot(covid, aes(x = dayofweek, y = cases)) + 
+  geom_boxplot() +scale_y_continuous(labels = scales::comma, limits = c(0,280000), breaks=seq(0,280000,40000)) +
+  labs(x = "Day of Week", y = "Cases") +
+  theme(plot.title = element_text(hjust = 0.5), 
+        axis.text.x = element_text(angle = 45),
+        text = element_text(size=9))
+
+ggarrange(plot1, plot3, ncol=2, nrow = 1)
+
+```
+
+\newpage
+
+# 3. Models Considered
+
+## 3.1 Parametric Signal Model
+
+```{r Periodogram for Parametric Signal Model, include = FALSE}
+# pgram(covid$cases_fixed) + 
+#   geom_vline(xintercept = 2, color = "Red", linetype="dotted") +
+#   geom_vline(xintercept = 43, color = "Red", linetype="dotted") +
+#   geom_vline(xintercept = 86, color = "Red", linetype="dotted")
+```
+
+First we consider a parametric signal model. Using a periodogram we see that there are two dominant fourier frequencies at 2/302 and 43/302 corresponding to a period of 151 and 7.02 days. Thus we create a sinusoid with frequency 1/151 to model the larger trend, and then use indicators for the day of week to model the weekly seasonality. As it appears the amplitude of the weekly seasonality decreases in the troughs of the sinusoid, we include an interaction term between the sinusoid and the indicators. Lastly, we also interact time, day of week indicator, and the larger sinusoid to capture any effects that might be from all three at the same time. 
+
+<!-- There are certain days where there are abnormally high counts as well as abnormally low counts too. Thus we add an indicator for these periods to help us better capture the underlying regularity of the data. -->
+
+\begin{gather}
+\text{Cases}_t = \beta_0 + \beta_1 t + \beta_2 t^2 + \sum_{i=0}^5 \left[
+\beta_{3 +6i} I_{\text{weekday}_{it}} 
++ \beta_{4+ 6i} tI_{\text{weekday}_{it}}
++ \beta_{5 +6i} I_{\text{weekday}_{it}} \text{cos} \left( \frac{2\pi t}{151} \right)\right. \\
+\left.
++ \beta_{6+6i} I_{\text{weekday}_{it}} \text{sin} \left( \frac{2\pi t}{151} \right)
++ \beta_{7+6i} t I_{\text{weekday}_{it}} \text{cos} \left( \frac{2\pi t}{151} \right)
++ \beta_{8+6i}   t I_{\text{weekday}_{it}} \text{sin} \left( \frac{2\pi t}{151} \right)
+ \right] \\
+ + \sum_{j=0}^{2} \left[ \beta_{39+2j} \text{cos} \left( \frac{2\pi t}{151} \right) + \beta_{40+2j} \text{sin} \left( \frac{2\pi t}{151} \right) \right]
+\end{gather}
+
+
+```{r, echo = FALSE}
+freq_ann = 2/302
+# model_para0 = lm(data = covid, cases_fixed ~
+#                   # big sinusoid 
+#                   (cos(2*pi*t*freq_ann) + sin(2*pi*t*freq_ann)) * (1 + I(t) + I(t^2)) 
+#                   
+#                 # indicator for day of week 
+#                   + dayofweek * (1 + I(t) + I(t^2)) 
+#                   
+#                 # day of week interaction with larger curve 
+#                   + dayofweek:(sin(2*pi*t*freq_ann) + cos(2*pi*t*freq_ann))
+#                   
+#                 # # problem indicators
+#                 #   + index164_indicator
+#                 #   + index280_indicator 
+#                 #   + index273_indicator 
+#                 #   + index279_indicator 
+#                 #   + index156_indicator 
+#                 #   + index287_indicator 
+#                 )
+
+model_para1 = lm(data = covid, cases_fixed ~
+                  # big sinusoid 
+                  (cos(2*pi*t*freq_ann) + sin(2*pi*t*freq_ann)) * (1 + I(t) + I(t^2)) 
+                  
+                # indicator for day of week 
+                
+                  + dayofweek 
+                  + dayofweek * I(t)
+                  # + dayofweek * I(t^2) 
+                  
+                # day of week interaction with larger curve 
+                  + dayofweek:(sin(2*pi*t*freq_ann) + cos(2*pi*t*freq_ann))* (1 + I(t))
+                  
+                # # problem indicators
+                #   + index164_indicator
+                #   + index280_indicator 
+                #   + index273_indicator 
+                #   + index279_indicator 
+                #   + index156_indicator 
+                #   + index287_indicator 
+                )
+
+# model_para2 = lm(data = covid, cases_fixed ~
+#                   # big sinusoid 
+#                   (cos(2*pi*t*freq_ann) + sin(2*pi*t*freq_ann)) * (1 + I(t) + I(t^2)) 
+#                   
+#                 # indicator for day of week 
+#                   + dayofweek * (1 + I(t) + I(t^2)) 
+#                   
+#                 # day of week interaction with larger curve 
+#                   + dayofweek:(sin(2*pi*t*freq_ann) + cos(2*pi*t*freq_ann))* (1 + I(t) + I(t^2)) 
+#                 #   
+#                 # # problem indicators
+#                 #   + index164_indicator
+#                 #   + index280_indicator 
+#                 #   + index273_indicator 
+#                 #   + index279_indicator 
+#                 #   + index156_indicator 
+#                 #   + index287_indicator 
+#                 )
+```
+
+
+
+
+```{r, include = FALSE}
+summary(model_para1)
+```
+
+```{r Building Signal Model with fixed cases, echo=FALSE, fig.align='center', fig.cap="Left panel: Our parametric signal model with the fitted values plotted in red. Right panel: Residuals of the aforementioend  parametric model", fig.height=4, fig.width=8, warning=FALSE}
+
+covid$para_fitted = model_para1$fitted.values
+covid$para_res = model_para1$residuals
+
+
+plot4 = time_case_plot + 
+  geom_line(data = covid, aes(x = date_time, y = cases_fixed), color = "Black", alpha = 0.5) +
+  geom_line(data = covid, aes(x = date_time, y = para_fitted), color = "Red", ) 
+
+plot5 = ggplot() + 
+  geom_line(data = covid, aes(x = date_time, y = para_res), color = "Black", alpha = 0.5) +
+  scale_x_date(date_breaks = "months" , date_labels = "%b-%y") +
+  theme(plot.title = element_text(hjust = 0.5), 
+        axis.text.x = element_text(angle = 45),
+        text = element_text(size=9)) +
+  labs(x = "Date", y = "Residuals") 
+
+ggarrange(plot4, plot5, ncol=2, nrow = 1)
+
+```
+
+
+## 3.2 Differencing model
+
+We now try a differencing approach. Because there exists heteroskedasticity, we apply a VST by taking the fourth root of all values. Since there is weekly seasonality, we applying differencing with a lag of 7. Looking at a periodogram, we see there is still a rather large frequency at period 3, so we take another difference of lag 3. The resulting plot looks relatively stationary.
+
+```{r Differencing Model, echo = FALSE, fig.cap="Plot of VST transformed data with lag 7 and lag 3 differencing applied. The result looks relatively stationary.",fig.width= 8, fig.height = 4, fig.align='center'}
+vst_covid = covid$cases_fixed^.25
+diff_covid = diff(diff(vst_covid, lag = 7), lag = 3)
+plot6 = ggplot() + 
+  geom_line(aes(x = covid$date_time[0:-10], y = diff_covid)) + 
+  labs(y = expression(paste(nabla[3],nabla[7],sqrt("Cases"[t], 4))), x = "Date") + 
+  scale_x_date(date_breaks = "months" , date_labels = "%b-%y") +
+  theme(plot.title = element_text(hjust = 0.5), 
+        axis.text.x = element_text(angle = 45),
+        text = element_text(size=9))
+plot6
+```
